@@ -1,6 +1,7 @@
 package be.uhasselt.vibration
 
 import android.os.Bundle
+import android.os.PowerManager
 import android.util.Log
 import android.widget.Button
 import android.widget.TextView
@@ -23,11 +24,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var mqttStatusText: TextView
     private lateinit var mqttPayloadText: TextView
 
+    private lateinit var wakeLock: PowerManager.WakeLock
+
     private val topic = "Output/Vibration"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "vibrationApp::mqttWakeLock"
+        )
+        wakeLock.acquire(20*60*1000L /*20 minutes*/)
 
         mqttClient = MqttClient.builder()
             .useMqttVersion5()
@@ -52,8 +62,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .buildAsync()
-
-
 
         connectToMqtt()
 
@@ -169,5 +177,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showSnackbar(message: String) {
         Snackbar.make(findViewById(android.R.id.content), message, Snackbar.LENGTH_SHORT).show()
+    }
+
+    override fun onDestroy() {
+        if (wakeLock.isHeld) wakeLock.release()
+        super.onDestroy()
     }
 }

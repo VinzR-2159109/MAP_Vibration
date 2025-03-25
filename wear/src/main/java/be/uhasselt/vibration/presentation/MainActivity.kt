@@ -27,12 +27,16 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.*
 import org.json.JSONObject
+import android.view.WindowManager
 
 class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
     private var vibrationJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         setContent {
             Text("Wear App Ready")
         }
