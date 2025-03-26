@@ -1,6 +1,8 @@
 package be.uhasselt.vibration.presentation
 
+import android.content.Context
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -31,11 +33,15 @@ import android.view.WindowManager
 
 class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
     private var vibrationJob: Job? = null
+    private lateinit var wakeLock: PowerManager.WakeLock
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.FULL_WAKE_LOCK, "Vibration::MainActivity")
+
 
         setContent {
             Text("Wear App Ready")
@@ -70,25 +76,45 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
         val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
         if (!vibrator.hasVibrator()) return
 
-        val cycleDuration = 1000L
-        val onTime = (cycleDuration * (ratio / 100.0)).toLong()
-        val offTime = cycleDuration - onTime
         val coercedAmplitude = amplitude.coerceIn(1, 255)
 
         vibrationJob = CoroutineScope(Dispatchers.Default).launch {
-            while (isActive) {
-                if (vibrator.hasAmplitudeControl()) {
+            if (ratio >= 85.0) {
+                while (isActive) {
+                    val onTime = 500L
                     vibrator.vibrate(VibrationEffect.createOneShot(onTime, coercedAmplitude))
-                } else {
-                    vibrator.vibrate(VibrationEffect.createOneShot(onTime, VibrationEffect.DEFAULT_AMPLITUDE))
+                    delay(onTime + 10)
                 }
-                delay(onTime + offTime)
+            } else {
+                while (isActive) {
+                    val basePulse = 50L
+                    val interval = ((1.0 - (ratio / 85.0)) * 1000L).toLong().coerceAtLeast(basePulse)
+
+                    vibrator.vibrate(VibrationEffect.createOneShot(basePulse, coercedAmplitude))
+
+                    delay(interval)
+                }
             }
         }
     }
 
+
     private fun stopVibration() {
         vibrationJob?.cancel()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!wakeLock.isHeld) {
+            wakeLock.acquire(30*60*1000L /*30 minutes*/)
+        }
+    }
+
+    override fun onPause() {
+        if (wakeLock.isHeld) {
+            wakeLock.release()
+        }
+        super.onPause()
     }
 
     override fun onDestroy() {
