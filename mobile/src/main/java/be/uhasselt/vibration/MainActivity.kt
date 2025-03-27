@@ -12,21 +12,23 @@ import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import com.hivemq.client.mqtt.MqttClient
-import com.hivemq.client.mqtt.mqtt3.Mqtt3AsyncClient
 import com.hivemq.client.mqtt.datatypes.MqttQos
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient
 import kotlinx.coroutines.delay
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
+import java.nio.ByteBuffer
 
 class MainActivity : AppCompatActivity() {
     private lateinit var mqttClient: Mqtt5AsyncClient
     private lateinit var mqttStatusText: TextView
-    private lateinit var mqttPayloadText: TextView
+
+    private lateinit var vibrationPayloadTxt: TextView
+    private lateinit var directionPayloadTxt: TextView
 
     private lateinit var wakeLock: PowerManager.WakeLock
 
-    private val topic = "Output/Vibration"
+    private val VIBRATION_TOPIC = "Output/Vibration"
+    private val DIRECTION_TOPIC = "Output/Direction"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,7 +70,8 @@ class MainActivity : AppCompatActivity() {
         mqttStatusText = findViewById(R.id.mqttStatus_txt)
         mqttStatusText.text = "MQTT: Connecting..."
 
-        mqttPayloadText = findViewById(R.id.mqttPayload_txt)
+        vibrationPayloadTxt = findViewById(R.id.vibrationPayload_txt)
+        directionPayloadTxt = findViewById(R.id.directionPayload_txt)
 
         findViewById<Button>(R.id.vibrate_btn).setOnClickListener {
             sendVibrateToWatch(150, 70.0)
@@ -101,44 +104,76 @@ class MainActivity : AppCompatActivity() {
 
     private fun subscribeToTopic() {
         mqttClient.subscribeWith()
-            .topicFilter(topic)
+            .topicFilter(VIBRATION_TOPIC)
             .qos(MqttQos.AT_MOST_ONCE)
-            .callback { publish ->
-                val payload = publish.payload.orElse(null)?.let {
-                    val bytes = ByteArray(it.remaining())
-                    it.get(bytes)
-                    String(bytes)
+            .callback { publish -> handleMqttMessage(publish.topic.toString(), publish.payload.orElse(null)) }
+            .send()
+
+        mqttClient.subscribeWith()
+            .topicFilter(DIRECTION_TOPIC)
+            .qos(MqttQos.AT_MOST_ONCE)
+            .callback { publish -> handleMqttMessage(publish.topic.toString(), publish.payload.orElse(null)) }
+            .send()
+
+    }
+
+    private fun handleMqttMessage(topic: String, rawPayload: ByteBuffer?) {
+        val payload = rawPayload?.let {
+            val bytes = ByteArray(it.remaining())
+            it.get(bytes)
+            String(bytes)
+        } ?: return
+
+        runOnUiThread {
+            when (topic){
+                VIBRATION_TOPIC -> {
+                    vibrationPayloadTxt.text = payload
                 }
 
-                if (payload != null) {
-                    try {
-                        mqttPayloadText.text = payload
-                        val jsonPayload = JSONObject(payload)
-                        val status = jsonPayload.getString("status")
+                DIRECTION_TOPIC -> {
+                    directionPayloadTxt.text = payload
+                }
+            }
+        }
 
-                        if (status == "off") {
-                            sendCancelToWatch()
-                        } else if (status == "on") {
+        try {
+            val jsonPayload = JSONObject(payload)
+            when (topic) {
+                VIBRATION_TOPIC -> {
+                    when (jsonPayload.optString("status")) {
+                        "off" -> sendCancelToWatch()
+                        "on" -> {
                             val amplitude = jsonPayload.getInt("amplitude")
                             val ratio = jsonPayload.getDouble("vibration_ratio")
                             sendVibrateToWatch(amplitude, ratio)
                         }
-
-                    } catch (e: Exception) {
-                        showSnackbar("JSON error: ${e.message}")
-                        Log.e("MQTT", "Invalid payload", e)
                     }
-                } else {
-                    showSnackbar("Payload is null")
-                    Log.e("MQTT", "Payload is null")
+                }
+
+                DIRECTION_TOPIC -> {
+                    when (jsonPayload.optString("status")) {
+                        "UNKNOWN" -> {
+                            sendCancelToWatch()
+                        }
+
+                        "KNOWN" -> {
+                            val x = jsonPayload.getDouble("x")
+                            val y = jsonPayload.getDouble("y")
+                            sendDirectionToWatch(x, y)
+                        }
+                    }
+
                 }
             }
-            .send()
+        } catch (e: Exception) {
+            Log.e("MQTT", "Invalid payload", e)
+            showSnackbar("JSON error: ${e.message}")
+        }
     }
 
 
+
     private fun sendVibrateToWatch(amplitude: Int, ratio: Double) {
-        showSnackbar("Sending Vibrate A: $amplitude & R: $ratio")
         lifecycleScope.launch {
             val nodes = Wearable.getNodeClient(this@MainActivity).connectedNodes.await()
             for (node in nodes) {
@@ -162,6 +197,23 @@ class MainActivity : AppCompatActivity() {
             for (node in nodes) {
                 Wearable.getMessageClient(this@MainActivity)
                     .sendMessage(node.id, "/cancel", null)
+                    .await()
+            }
+        }
+    }
+
+    private fun sendDirectionToWatch(x : Double, y : Double){
+        lifecycleScope.launch {
+            val nodes = Wearable.getNodeClient(this@MainActivity).connectedNodes.await()
+            for (node in nodes) {
+                val payload = JSONObject()
+                    .put("x", x)
+                    .put("y", y)
+                    .toString()
+                    .toByteArray()
+
+                Wearable.getMessageClient(this@MainActivity)
+                    .sendMessage(node.id, "/direction", payload)
                     .await()
             }
         }

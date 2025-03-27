@@ -59,25 +59,47 @@
         app:layout_constraintVertical_bias="0.2"/>
 
     <TextView
-        android:id="@+id/mqttPayload_txt"
+        android:id="@+id/vibrationPayload_txt"
         android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_marginStart="8dp"
-        android:layout_marginTop="64dp"
-        android:layout_marginEnd="8dp"
-        android:layout_marginBottom="8dp"
-        android:text="TextView"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="16dp"
+        android:background="@drawable/status_background"
 
+        android:elevation="4dp"
+        android:text="Vibration Payload"
         android:textColor="@android:color/white"
         android:textSize="18sp"
-        android:background="@drawable/status_background"
-        android:elevation="4dp"
         android:textStyle="bold"
 
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="1.0"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/cancel_btn" />
+        app:layout_constraintTop_toBottomOf="@+id/cancel_btn"
+        app:layout_constraintVertical_bias="0.301" />
+
+    <TextView
+        android:id="@+id/directionPayload_txt"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+
+        android:background="@drawable/status_background"
+        android:elevation="4dp"
+        android:text="Direction Payload"
+        android:textColor="@android:color/white"
+        android:textSize="18sp"
+
+        android:textStyle="bold"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="1.0"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/vibrationPayload_txt"
+        app:layout_constraintVertical_bias="0.225" />
 
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -1,23 +1,32 @@
 package be.uhasselt.vibration.presentation
 
-import android.content.Context
 import android.os.Bundle
 import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
@@ -29,10 +38,14 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.*
 import org.json.JSONObject
-import android.view.WindowManager
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 
 class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
     private var vibrationJob: Job? = null
+    private val direction = mutableStateOf(Pair(0.0, 0.0))
+
     private lateinit var wakeLock: PowerManager.WakeLock
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,7 +57,10 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 
 
         setContent {
-            Text("Wear App Ready")
+            val currentDirection by direction
+            VibrationTheme {
+                DirectionIndicator(currentDirection.first, currentDirection.second)
+            }
         }
 
         Wearable.getMessageClient(this).addListener(this)
@@ -63,8 +79,21 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
             }
         }
 
-        if (event.path == "/cancel") {
+        else if (event.path == "/cancel") {
             stopVibration()
+        }
+
+        else if (event.path == "/direction") {
+            val message = String(event.data)
+            try {
+                val jsonDirection = JSONObject(message)
+                val x = jsonDirection.getDouble("x")
+                val y = jsonDirection.getDouble("y")
+
+                handleDirection(x, y)
+            } catch (e: Exception) {
+                Log.e("Wear", "Invalid vibration payload", e)
+            }
         }
     }
 
@@ -103,6 +132,11 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
         vibrationJob?.cancel()
     }
 
+    private fun handleDirection(x : Double , y : Double) {
+        direction.value = Pair(x, y)
+    }
+
+
     override fun onResume() {
         super.onResume()
         if (!wakeLock.isHeld) {
@@ -123,6 +157,64 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
     }
 }
 
+@Composable
+fun DirectionIndicator(x: Double, y: Double) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colors.background),
+        contentAlignment = Alignment.Center
+    ) {
+        val angleRadians = atan2(y, -x) + Math.PI/2
+        val angleDegrees = Math.toDegrees(angleRadians)
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            if (x == 0.0 && y == 0.0) return@Canvas
+
+            val center = Offset(size.width / 2, size.height / 2)
+
+            // Adjust angle: watch held upside down + x-axis flipped
+            val angleRadians = atan2(y, -x) + Math.PI / 2
+
+            // Triangle config
+            val triangleLength = size.maxDimension // full size to extend beyond bezel
+            val triangleAngleOffset = Math.toRadians(25.0) // spread
+
+            // Base corners (outside screen)
+            val baseAngle1 = angleRadians - triangleAngleOffset
+            val baseAngle2 = angleRadians + triangleAngleOffset
+
+            val base1 = Offset(
+                x = center.x + cos(baseAngle1).toFloat() * triangleLength,
+                y = center.y + sin(baseAngle1).toFloat() * triangleLength
+            )
+
+            val base2 = Offset(
+                x = center.x + cos(baseAngle2).toFloat() * triangleLength,
+                y = center.y + sin(baseAngle2).toFloat() * triangleLength
+            )
+
+            // Draw the triangle pointing out from center
+            drawPath(
+                path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(center.x, center.y) // tip
+                    lineTo(base1.x, base1.y)
+                    lineTo(base2.x, base2.y)
+                    close()
+                },
+                color = Color.Green.copy(alpha = 0.6f)
+            )
+
+            // Draw the center dot
+            drawCircle(
+                color = Color.Blue,
+                radius = 20f,
+                center = center
+            )
+        }
+
+    }
+}
 
 
 @Composable
@@ -155,3 +247,5 @@ fun Greeting(greetingName: String) {
 fun DefaultPreview() {
     WearApp("Preview Android")
 }
+
+
