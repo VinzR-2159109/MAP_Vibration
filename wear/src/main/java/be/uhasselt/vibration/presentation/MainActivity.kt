@@ -85,6 +85,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 
         else if (event.path == "/cancel") {
             stopVibration()
+            isActive.value = false
         }
 
         else if (event.path == "/direction") {
@@ -138,6 +139,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 
     private fun stopVibration() {
         vibrationJob?.cancel()
+        isActive.value = false
     }
 
     private fun handleDirection(x : Double , y : Double) {
@@ -166,13 +168,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 }
 
 @Composable
-fun DirectionIndicator(
-    x: Double,
-    y: Double,
-    status: Boolean,
-    amplitude: Int,
-    ratio: Double
-) {
+fun DirectionIndicator(x: Double, y: Double, status: Boolean, amplitude: Int, ratio: Double){
     val animatedRadius = remember { Animatable(0f) }
 
     LaunchedEffect(status, amplitude, ratio) {
