@@ -171,21 +171,36 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 fun DirectionIndicator(x: Double, y: Double, status: Boolean, amplitude: Int, ratio: Double){
     val animatedRadius = remember { Animatable(0f) }
 
-    LaunchedEffect(status, amplitude, ratio) {
-        if (!status || amplitude <= 0 || ratio <= 0.0) {
-            animatedRadius.snapTo(0f)
-            return@LaunchedEffect
-        }
+    val coroutineScope = rememberCoroutineScope()
+    var animationJob by remember { mutableStateOf<Job?>(null) }
 
-        while (status) {
+    val currentAmplitude by rememberUpdatedState(amplitude)
+    val currentRatio by rememberUpdatedState(ratio)
+
+    LaunchedEffect(status) {
+        if (!status || amplitude <= 0 || ratio <= 0.0) {
+            animationJob?.cancel()
             animatedRadius.snapTo(0f)
-            animatedRadius.animateTo(
-                targetValue = 80f + (amplitude / 3f),
-                animationSpec = tween(
-                    durationMillis = ((1.0 - (ratio / 85.0)) * 1000).toInt().coerceAtLeast(300),
-                    easing = LinearEasing
-                )
-            )
+        } else if (animationJob == null || animationJob?.isActive == false) {
+            animationJob = coroutineScope.launch {
+                while (status) {
+                    val scaledAmplitude = currentAmplitude.coerceIn(1, 255) / 255f
+                    val minRadius = 30f
+                    val maxRadius = 180f
+                    val radius = minRadius + (maxRadius - minRadius) * scaledAmplitude
+
+                    val duration = ((1.0 - (currentRatio / 85.0)) * 1000).toInt().coerceAtLeast(300)
+
+                    animatedRadius.snapTo(0f)
+                    animatedRadius.animateTo(
+                        targetValue = radius,
+                        animationSpec = tween(
+                            durationMillis = duration,
+                            easing = LinearEasing
+                        )
+                    )
+                }
+            }
         }
     }
 
