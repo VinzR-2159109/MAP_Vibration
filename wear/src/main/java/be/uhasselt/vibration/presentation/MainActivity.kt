@@ -8,30 +8,19 @@ import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
-import androidx.wear.compose.material.TimeText
-import androidx.wear.tooling.preview.devices.WearDevices
-import be.uhasselt.vibration.R
 import be.uhasselt.vibration.presentation.theme.VibrationTheme
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.MessageEvent
@@ -42,9 +31,13 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 
+
 class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
     private var vibrationJob: Job? = null
     private val direction = mutableStateOf(Pair(0.0, 0.0))
+    private val isActive = mutableStateOf(false)
+    private val amplitudeState = mutableStateOf(0)
+    private val ratioState = mutableStateOf(0.0)
 
     private lateinit var wakeLock: PowerManager.WakeLock
 
@@ -58,10 +51,21 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 
         setContent {
             val currentDirection by direction
+            val status by isActive
+            val amplitude by amplitudeState
+            val ratio by ratioState
+
             VibrationTheme {
-                DirectionIndicator(currentDirection.first, currentDirection.second)
+                DirectionIndicator(
+                    x = currentDirection.first,
+                    y = currentDirection.second,
+                    status = status,
+                    amplitude = amplitude,
+                    ratio = ratio
+                )
             }
         }
+
 
         Wearable.getMessageClient(this).addListener(this)
     }
@@ -102,6 +106,10 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 
         if (amplitude <= 0 || ratio <= 0) return
 
+        amplitudeState.value = amplitude
+        ratioState.value = ratio
+        isActive.value = true
+
         val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
         if (!vibrator.hasVibrator()) return
 
@@ -120,12 +128,12 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
                     val interval = ((1.0 - (ratio / 85.0)) * 1000L).toLong().coerceAtLeast(basePulse)
 
                     vibrator.vibrate(VibrationEffect.createOneShot(basePulse, coercedAmplitude))
-
                     delay(interval)
                 }
             }
         }
     }
+
 
 
     private fun stopVibration() {
@@ -158,29 +166,62 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 }
 
 @Composable
-fun DirectionIndicator(x: Double, y: Double) {
+fun DirectionIndicator(
+    x: Double,
+    y: Double,
+    status: Boolean,
+    amplitude: Int,
+    ratio: Double
+) {
+    val animatedRadius = remember { Animatable(0f) }
+
+    LaunchedEffect(status, amplitude, ratio) {
+        if (!status || amplitude <= 0 || ratio <= 0.0) {
+            animatedRadius.snapTo(0f)
+            return@LaunchedEffect
+        }
+
+        while (status) {
+            animatedRadius.snapTo(0f)
+            animatedRadius.animateTo(
+                targetValue = 80f + (amplitude / 3f),
+                animationSpec = tween(
+                    durationMillis = ((1.0 - (ratio / 85.0)) * 1000).toInt().coerceAtLeast(300),
+                    easing = LinearEasing
+                )
+            )
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colors.background),
         contentAlignment = Alignment.Center
     ) {
-        val angleRadians = atan2(y, -x) + Math.PI/2
-        val angleDegrees = Math.toDegrees(angleRadians)
-
         Canvas(modifier = Modifier.fillMaxSize()) {
-            if (x == 0.0 && y == 0.0) return@Canvas
-
             val center = Offset(size.width / 2, size.height / 2)
 
-            // Adjust angle: watch held upside down + x-axis flipped
+            if (!status || (x == 0.0 && y == 0.0)) {
+                drawCircle(
+                    color = Color(0xFFFFA500), // Orange center dot when off
+                    radius = 20f,
+                    center = center
+                )
+                return@Canvas
+            }
+
+            // Animated pulsing circle
+            drawCircle(
+                color = Color.Green.copy(alpha = 0.2f),
+                radius = animatedRadius.value,
+                center = center
+            )
+
             val angleRadians = atan2(y, -x) + Math.PI / 2
+            val triangleLength = size.maxDimension
+            val triangleAngleOffset = Math.toRadians(25.0)
 
-            // Triangle config
-            val triangleLength = size.maxDimension // full size to extend beyond bezel
-            val triangleAngleOffset = Math.toRadians(25.0) // spread
-
-            // Base corners (outside screen)
             val baseAngle1 = angleRadians - triangleAngleOffset
             val baseAngle2 = angleRadians + triangleAngleOffset
 
@@ -194,10 +235,9 @@ fun DirectionIndicator(x: Double, y: Double) {
                 y = center.y + sin(baseAngle2).toFloat() * triangleLength
             )
 
-            // Draw the triangle pointing out from center
             drawPath(
                 path = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(center.x, center.y) // tip
+                    moveTo(center.x, center.y)
                     lineTo(base1.x, base1.y)
                     lineTo(base2.x, base2.y)
                     close()
@@ -205,47 +245,11 @@ fun DirectionIndicator(x: Double, y: Double) {
                 color = Color.Green.copy(alpha = 0.6f)
             )
 
-            // Draw the center dot
             drawCircle(
-                color = Color.Blue,
+                color = Color.Green.copy(alpha = 0.6f),
                 radius = 20f,
                 center = center
             )
         }
-
     }
 }
-
-
-@Composable
-fun WearApp(greetingName: String) {
-    VibrationTheme {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colors.background),
-            contentAlignment = Alignment.Center
-        ) {
-            TimeText()
-            Greeting(greetingName = greetingName)
-        }
-    }
-}
-
-@Composable
-fun Greeting(greetingName: String) {
-    Text(
-        modifier = Modifier.fillMaxWidth(),
-        textAlign = TextAlign.Center,
-        color = MaterialTheme.colors.primary,
-        text = stringResource(R.string.hello_world, greetingName)
-    )
-}
-
-@Preview(device = WearDevices.SMALL_ROUND, showSystemUi = true)
-@Composable
-fun DefaultPreview() {
-    WearApp("Preview Android")
-}
-
-
