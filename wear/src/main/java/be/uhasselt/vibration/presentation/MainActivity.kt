@@ -39,6 +39,11 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
     private val amplitudeState = mutableStateOf(0)
     private val ratioState = mutableStateOf(0.0)
 
+    @Volatile private var latestAmplitude = 0
+    @Volatile private var latestRatio = 0.0
+    @Volatile private var isVibrating = false
+
+
     private lateinit var wakeLock: PowerManager.WakeLock
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,7 +82,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
                 val json = JSONObject(message)
                 val amplitude = json.getInt("amplitude")
                 val ratio = json.getDouble("ratio")
-                handleVibration(amplitude, ratio)
+                handleVibration(amplitude)
             } catch (e: Exception) {
                 Log.e("Wear", "Invalid vibration payload", e)
             }
@@ -102,44 +107,37 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
         }
     }
 
-    private fun handleVibration(amplitude: Int, ratio: Double) {
-        vibrationJob?.cancel()
+    private fun handleVibration(amplitude: Int) {
+        if (amplitude <= 0) return
 
-        if (amplitude <= 0 || ratio <= 0) return
+        latestAmplitude = amplitude
+        isVibrating = true
 
         amplitudeState.value = amplitude
-        ratioState.value = ratio
-        isActive.value = true
 
         val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
         if (!vibrator.hasVibrator()) return
 
-        val coercedAmplitude = amplitude.coerceIn(1, 255)
+        if (vibrationJob?.isActive == true) return
 
         vibrationJob = CoroutineScope(Dispatchers.Default).launch {
-            if (ratio >= 85.0) {
-                while (isActive) {
-                    val onTime = 500L
-                    vibrator.vibrate(VibrationEffect.createOneShot(onTime, coercedAmplitude))
-                    delay(onTime + 10)
-                }
-            } else {
-                while (isActive) {
-                    val basePulse = 50L
-                    val interval = ((1.0 - (ratio / 85.0)) * 1000L).toLong().coerceAtLeast(basePulse)
+            val interval = 800L
+            val duration = 60L
 
-                    vibrator.vibrate(VibrationEffect.createOneShot(basePulse, coercedAmplitude))
-                    delay(interval)
-                }
+            while (isVibrating) {
+                val coercedAmplitude = latestAmplitude.coerceIn(1, 255)
+
+                vibrator.vibrate(VibrationEffect.createOneShot(duration, coercedAmplitude))
+                delay(interval)
             }
         }
     }
 
 
-
     private fun stopVibration() {
         vibrationJob?.cancel()
         isActive.value = false
+        isVibrating = false
     }
 
     private fun handleDirection(x : Double , y : Double) {
