@@ -9,7 +9,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.EaseInOutCubic
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -27,22 +27,15 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.*
 import org.json.JSONObject
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
-
 
 class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListener {
+
     private var vibrationJob: Job? = null
-    private val direction = mutableStateOf(Pair(0.0, 0.0))
     private val isActive = mutableStateOf(false)
     private val amplitudeState = mutableStateOf(0)
-    private val ratioState = mutableStateOf(0.0)
 
     @Volatile private var latestAmplitude = 0
-    @Volatile private var latestRatio = 0.0
     @Volatile private var isVibrating = false
-
 
     private lateinit var wakeLock: PowerManager.WakeLock
 
@@ -50,60 +43,35 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
         super.onCreate(savedInstanceState)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.FULL_WAKE_LOCK, "Vibration::MainActivity")
-
+        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.FULL_WAKE_LOCK, "Vibration::MainActivity")
 
         setContent {
-            val currentDirection by direction
             val status by isActive
             val amplitude by amplitudeState
-            val ratio by ratioState
 
             VibrationTheme {
-                DirectionIndicator(
-                    x = currentDirection.first,
-                    y = currentDirection.second,
-                    status = status,
-                    amplitude = amplitude,
-                    ratio = ratio
-                )
+                DirectionIndicator(status = status, amplitude = amplitude)
             }
         }
-
 
         Wearable.getMessageClient(this).addListener(this)
     }
 
     override fun onMessageReceived(event: MessageEvent) {
-        if (event.path == "/vibrate") {
-            val message = String(event.data)
-            try {
-                val json = JSONObject(message)
-                val amplitude = json.getInt("amplitude")
-                val ratio = json.getDouble("ratio")
-                handleVibration(amplitude)
-            } catch (e: Exception) {
-                Log.e("Wear", "Invalid vibration payload", e)
-            }
+        when (event.path) {
+            "/vibrate" -> handleVibrateMessage(String(event.data))
+            "/cancel" -> stopVibration()
         }
+    }
 
-        else if (event.path == "/cancel") {
-            stopVibration()
-            isActive.value = false
-        }
-
-        else if (event.path == "/direction") {
-            val message = String(event.data)
-            try {
-                val jsonDirection = JSONObject(message)
-                val x = jsonDirection.getDouble("x")
-                val y = jsonDirection.getDouble("y")
-
-                handleDirection(x, y)
-            } catch (e: Exception) {
-                Log.e("Wear", "Invalid vibration payload", e)
-            }
+    private fun handleVibrateMessage(message: String) {
+        try {
+            val json = JSONObject(message)
+            val amplitude = json.getInt("amplitude")
+            handleVibration(amplitude)
+        } catch (e: Exception) {
+            Log.e("Wear", "Invalid vibration payload", e)
         }
     }
 
@@ -112,7 +80,7 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 
         latestAmplitude = amplitude
         isVibrating = true
-
+        isActive.value = true
         amplitudeState.value = amplitude
 
         val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
@@ -126,13 +94,11 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 
             while (isVibrating) {
                 val coercedAmplitude = latestAmplitude.coerceIn(1, 255)
-
                 vibrator.vibrate(VibrationEffect.createOneShot(duration, coercedAmplitude))
                 delay(interval)
             }
         }
     }
-
 
     private fun stopVibration() {
         vibrationJob?.cancel()
@@ -140,15 +106,10 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
         isVibrating = false
     }
 
-    private fun handleDirection(x : Double , y : Double) {
-        direction.value = Pair(x, y)
-    }
-
-
     override fun onResume() {
         super.onResume()
         if (!wakeLock.isHeld) {
-            wakeLock.acquire(30*60*1000L /*30 minutes*/)
+            wakeLock.acquire(30 * 60 * 1000L) // 30 minutes
         }
     }
 
@@ -166,39 +127,26 @@ class MainActivity : ComponentActivity(), MessageClient.OnMessageReceivedListene
 }
 
 @Composable
-fun DirectionIndicator(x: Double, y: Double, status: Boolean, amplitude: Int, ratio: Double){
+fun DirectionIndicator(status: Boolean, amplitude: Int) {
     val animatedRadius = remember { Animatable(0f) }
-
-    val coroutineScope = rememberCoroutineScope()
-    var animationJob by remember { mutableStateOf<Job?>(null) }
-
     val currentAmplitude by rememberUpdatedState(amplitude)
-    val currentRatio by rememberUpdatedState(ratio)
 
-    LaunchedEffect(status) {
-        if (!status || amplitude <= 0 || ratio <= 0.0) {
-            animationJob?.cancel()
-            animatedRadius.snapTo(0f)
-        } else if (animationJob == null || animationJob?.isActive == false) {
-            animationJob = coroutineScope.launch {
-                while (status) {
-                    val scaledAmplitude = currentAmplitude.coerceIn(1, 255) / 255f
-                    val minRadius = 30f
-                    val maxRadius = 180f
-                    val radius = minRadius + (maxRadius - minRadius) * scaledAmplitude
+    LaunchedEffect(status, amplitude) {
+        if (!status || amplitude <= 0) {
+            animatedRadius.animateTo(
+                targetValue = 20f,
+                animationSpec = tween(durationMillis = 300, easing = EaseInOutCubic)
+            )
+        } else {
+            val scaledAmplitude = currentAmplitude.coerceIn(1, 255) / 255f
+            val minRadius = 20f
+            val maxRadius = 160f
+            val targetRadius = minRadius + (maxRadius - minRadius) * scaledAmplitude
 
-                    val duration = ((1.0 - (currentRatio / 85.0)) * 1000).toInt().coerceAtLeast(300)
-
-                    animatedRadius.snapTo(0f)
-                    animatedRadius.animateTo(
-                        targetValue = radius,
-                        animationSpec = tween(
-                            durationMillis = duration,
-                            easing = LinearEasing
-                        )
-                    )
-                }
-            }
+            animatedRadius.animateTo(
+                targetValue = targetRadius,
+                animationSpec = tween(durationMillis = 300, easing = EaseInOutCubic)
+            )
         }
     }
 
@@ -211,54 +159,14 @@ fun DirectionIndicator(x: Double, y: Double, status: Boolean, amplitude: Int, ra
         Canvas(modifier = Modifier.fillMaxSize()) {
             val center = Offset(size.width / 2, size.height / 2)
 
-            if (!status || (x == 0.0 && y == 0.0)) {
-                drawCircle(
-                    color = Color(0xFFFFA500), // Orange center dot when off
-                    radius = 20f,
-                    center = center
-                )
-                return@Canvas
-            }
-
-            // Animated pulsing circle
             drawCircle(
-                color = Color.Green.copy(alpha = 0.2f),
+                color = if (!status || amplitude <= 0) Color(0xFFFFA500) else Color.Green.copy(alpha = 0.4f),
                 radius = animatedRadius.value,
-                center = center
-            )
-
-            val angleRadians = atan2(y, -x) + Math.PI / 2
-            val triangleLength = size.maxDimension
-            val triangleAngleOffset = Math.toRadians(25.0)
-
-            val baseAngle1 = angleRadians - triangleAngleOffset
-            val baseAngle2 = angleRadians + triangleAngleOffset
-
-            val base1 = Offset(
-                x = center.x + cos(baseAngle1).toFloat() * triangleLength,
-                y = center.y + sin(baseAngle1).toFloat() * triangleLength
-            )
-
-            val base2 = Offset(
-                x = center.x + cos(baseAngle2).toFloat() * triangleLength,
-                y = center.y + sin(baseAngle2).toFloat() * triangleLength
-            )
-
-            drawPath(
-                path = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(center.x, center.y)
-                    lineTo(base1.x, base1.y)
-                    lineTo(base2.x, base2.y)
-                    close()
-                },
-                color = Color.Green.copy(alpha = 0.6f)
-            )
-
-            drawCircle(
-                color = Color.Green.copy(alpha = 0.6f),
-                radius = 20f,
                 center = center
             )
         }
     }
 }
+
+
+
